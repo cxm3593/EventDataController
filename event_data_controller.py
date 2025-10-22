@@ -9,14 +9,22 @@ import cv2
 import numpy as np
 import os
 import plotly.graph_objects as go
+import pandas as pd
+import h5py
 
 class EventDataController:
-    def __init__(self, data_path: str):
+    def __init__(
+            self, 
+            data_path: str,
+            events_iterator_mode = 'delta_t',
+            events_iterator_delta_t = 10000,
+            events_iterator_n_events = 100000
+        ):
         """
         Initialize the EventDataController with a path to event data file.
         
         Args:
-            data_path: Path to the event data file (.raw or .dat format)
+            data_path: Path to the event data file (.raw or .hdf5 format)
             
         Raises:
             ValueError: If the data path is invalid or file is not readable
@@ -26,10 +34,24 @@ class EventDataController:
             raise ValueError(f"Invalid data path: {data_path}")
         
         # Load the event data
-        self.iterator = EventsIterator(self.data_path)
+        self.iterator = EventsIterator(
+            self.data_path, 
+            mode=events_iterator_mode, 
+            delta_t=events_iterator_delta_t, 
+            n_events=events_iterator_n_events
+        )
         self.data_info = self.__get_data_info()
         print("EventDataController initialized successfully.")
         print("Data information:", self.data_info)
+
+        self.data = None
+        ## identify the data format and load accordingly
+        if self.data_path.endswith('.raw'):
+            self.data = self.__load_data_raw()
+        elif self.data_path.endswith('.hdf5'):
+            self.data = self.__load_data_hdf5()
+        else:
+            raise ValueError(f"Unsupported data format: {self.data_path}")
 
     def __validate_path(self) -> bool:
         """
@@ -47,17 +69,20 @@ class EventDataController:
             dict: A dictionary containing metadata information
         """
         info = {}
+
+        # Grab a separate iterator to avoid consuming the main one
+        local_iterator = EventsIterator(self.data_path)
         
         # Get spatial resolution
-        height, width = self.iterator.get_size()
+        height, width = local_iterator.get_size()
         info['resolution'] = (height, width)
         
         # Iterate through events to get count, start/end times
         total_events = 0
         start_time = None
         end_time = None
-        
-        for evs in self.iterator:
+
+        for evs in local_iterator:
             if len(evs) > 0:
                 # Get start time from first batch
                 if start_time is None:
@@ -72,10 +97,32 @@ class EventDataController:
         info['end_time_us'] = int(end_time) if end_time is not None else None
         info['duration_us'] = int(end_time - start_time) if (start_time is not None and end_time is not None) else None
         
-        # Reset iterator for future use
-        self.iterator = EventsIterator(self.data_path)
-        
         return info
+    
+    def __load_data_raw(self) -> pd.DataFrame:
+        """
+        Load event data from a raw file
+        """
+        evs_list: list[np.ndarray] = []
+        for evs in self.iterator:
+            evs_list.append(evs)
+
+        evs_array = np.concatenate(evs_list)
+
+        data = pd.DataFrame(evs_array, columns=['x', 'y', 'p', 't'])
+
+        return data
+        
+
+    def __load_data_hdf5(self) -> pd.DataFrame:
+        """
+        Load event data from an HDF5 file
+        """
+        file = h5py.File(self.data_path, 'r')
+        events = file['CD']['events'][:]
+        data = pd.DataFrame(events, columns=['x', 'y', 'p', 't'])
+        
+        return data
     
     def visualization_3D(self, start_time:float=None, end_time:float=None):
         """
@@ -91,33 +138,24 @@ class EventDataController:
         if end_time is None:
             end_time = self.data_info['end_time_us']
         
-        # Collect events within the time window
-        x_on, y_on, t_on = [], [], []
-        x_off, y_off, t_off = [], [], []
-        
-        for evs in self.iterator:
-            if len(evs) > 0:
-                # Filter events within time window
-                mask = (evs['t'] >= start_time) & (evs['t'] <= end_time)
-                filtered_evs = evs[mask]
-                
-                if len(filtered_evs) > 0:
-                    # Separate ON and OFF events
-                    on_mask = filtered_evs['p'] == 1
-                    off_mask = filtered_evs['p'] == 0
-                    
-                    # ON events (blue)
-                    x_on.extend(filtered_evs['x'][on_mask])
-                    y_on.extend(filtered_evs['y'][on_mask])
-                    t_on.extend(filtered_evs['t'][on_mask])
-                    
-                    # OFF events (red)
-                    x_off.extend(filtered_evs['x'][off_mask])
-                    y_off.extend(filtered_evs['y'][off_mask])
-                    t_off.extend(filtered_evs['t'][off_mask])
-        
-        # Reset iterator
-        self.iterator = EventsIterator(self.data_path)
+        # Use preloaded data (pandas DataFrame) and filter by time
+        if self.data is None or len(self.data) == 0:
+            raise RuntimeError("No event data loaded. Ensure self.data is populated.")
+
+        df = self.data
+        time_mask = (df['t'] >= start_time) & (df['t'] <= end_time)
+        df_slice = df.loc[time_mask]
+
+        on_mask = df_slice['p'] == 1
+        off_mask = df_slice['p'] == 0
+
+        x_on = df_slice.loc[on_mask, 'x'].to_numpy()
+        y_on = df_slice.loc[on_mask, 'y'].to_numpy()
+        t_on = df_slice.loc[on_mask, 't'].to_numpy()
+
+        x_off = df_slice.loc[off_mask, 'x'].to_numpy()
+        y_off = df_slice.loc[off_mask, 'y'].to_numpy()
+        t_off = df_slice.loc[off_mask, 't'].to_numpy()
         
         # Create 3D scatter plot
         fig = go.Figure()
@@ -184,28 +222,45 @@ class EventDataController:
         # Instantiate the frame generator with callback
         periodic_gen = PeriodicFrameGenerationAlgorithm(width, height, accumulation_time_us=accumulation_time_us, fps=fps)
         periodic_gen.set_output_callback(periodic_cb)
-        
-        # Process events
-        for evs in self.iterator:
-            if len(evs) > 0:
-                # Filter events within time window
-                mask = (evs['t'] >= start_time) & (evs['t'] <= end_time)
-                filtered_evs = evs[mask]
-                
-                if len(filtered_evs) > 0:
-                    # Feed events to the frame generator
-                    periodic_gen.process_events(filtered_evs)
-                    
-                    # Check for exit
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-                
-                # Stop if we've passed the end time
-                if evs['t'][-1] > end_time:
-                    break
+
+        # Use preloaded data; ensure sorted by time
+        if self.data is None or len(self.data) == 0:
+            raise RuntimeError("No event data loaded. Ensure self.data is populated.")
+
+        df = self.data
+        time_mask = (df['t'] >= start_time) & (df['t'] <= end_time)
+        df_slice = df.loc[time_mask].sort_values('t')
+
+        # Convert to structured numpy array expected by process_events
+        # Ensure dtype matches fields ('x','y','p','t') with appropriate types
+        evs_struct = np.zeros(len(df_slice), dtype=[('x', 'u2'), ('y', 'u2'), ('p', 'u1'), ('t', 'u8')])
+        evs_struct['x'] = df_slice['x'].to_numpy(dtype=np.uint16, copy=False)
+        evs_struct['y'] = df_slice['y'].to_numpy(dtype=np.uint16, copy=False)
+        evs_struct['p'] = df_slice['p'].to_numpy(dtype=np.uint8, copy=False)
+        evs_struct['t'] = df_slice['t'].to_numpy(dtype=np.uint64, copy=False)
+
+        # Feed in chunks to simulate streaming and allow periodic callbacks to fire
+        # Chunk size chosen to balance UI responsiveness and throughput
+        chunk_size = max(1, int(1e5))
+        for i in range(0, len(evs_struct), chunk_size):
+            chunk = evs_struct[i:i+chunk_size]
+            periodic_gen.process_events(chunk)
+            # Allow UI to update and user to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
         
         # Cleanup
         cv2.destroyAllWindows()
         
-        # Reset iterator for future use
-        self.iterator = EventsIterator(self.data_path)
+
+    def generate_binary_frames(
+            self, 
+            saving_dir:str,
+            accumulation_time_us:int=10000, 
+            fps:int=30, 
+            start_time:float=None,
+            end_time:float=None
+        ):
+        """
+        Generate binary event frames and save them to the specified directory.
+        """
