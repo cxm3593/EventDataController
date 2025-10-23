@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import h5py
 import time, threading, queue
+from tqdm import tqdm
 
 class EventDataController:
     def __init__(
@@ -47,7 +48,11 @@ class EventDataController:
         # load hdf5 handle
         self.data_hdf5 = h5py.File(self.data_path, 'r')
         self.events_handle = self.data_hdf5['CD']['events'] # By default
+
         self.data_resolution = data_resolution
+        self.data_width = data_resolution[0]
+        self.data_height = data_resolution[1]
+
         self.data_info = self.__compute_data_info()
         print("EventDataController initialized successfully.")
 
@@ -109,7 +114,7 @@ class EventDataController:
             accumulation_n_events:int = 5000
         ):
         '''
-        Generate frames from event data
+        Generate frames from event data, color indicates the last event's polarity
         Args:
             path: Path to save the generated frames
             start_time_us: Start time for frame generation (in microseconds)
@@ -134,6 +139,10 @@ class EventDataController:
         current_time = start_time_us
         frame_idx = 0
 
+        # Progress bar
+        total_frames = (end_time_us - start_time_us) // accumulation_time_us
+        pbar = tqdm(total=total_frames, desc="Generating frames")
+
         # Iteratively select events and then generate frames
         while current_time < end_time_us:
 
@@ -147,7 +156,30 @@ class EventDataController:
                 raise NotImplementedError("Accumulation by number of events is not implemented yet.")
             
             # Create frame from frame_events
+            frame = np.zeros((self.data_height, self.data_width, 3), dtype=np.uint8)
+
+            x_coords = frame_events['x']
+            y_coords = frame_events['y']
+            polarities = frame_events['p']
+
+            # Map polarity to colors:
+            # 1 -> white (255,255,255)
+            # 0 -> blue  (0,0,255)
+            # others -> black (0,0,0)
+            colors = np.zeros((len(polarities), 3), dtype=np.uint8)
+            colors[polarities == 1] = [255, 255, 255]
+            colors[polarities == 0] = [255, 0, 0]
+
+            # Assign color to pixels — later events overwrite earlier ones
+            frame[y_coords, x_coords] = colors
+
+            # Save frame as image
+            frame_filename = os.path.join(path, f"frame_{frame_idx:06d}_{frame_start_time}_{frame_end_time}.png")
+            cv2.imwrite(frame_filename, frame)
 
             # update current time and frame index
+            pbar.update(1)
             current_time += accumulation_time_us
             frame_idx += 1
+
+        pbar.close()
