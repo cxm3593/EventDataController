@@ -77,6 +77,9 @@ class EventDataController:
     def __compute_data_info(self) -> pd.DataFrame:
         """
         Compute basic information about the event data
+
+        Returns:
+            pd.DataFrame: DataFrame containing data information
         """
         data_info = {}
         data_info['num_events'] = self.events_handle.shape[0]
@@ -186,7 +189,7 @@ class EventDataController:
 
     def save_as_txt(self, output_path: str, batch_size: int = 100000):
         """
-        Convert hdf5 event data to a text file.
+        Convert hdf5 event data to a text file. The output format is compatible with E2VID input.
         
         Args:
             output_path (str): Path to save the text file

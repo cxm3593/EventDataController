@@ -1,0 +1,11 @@
+[project]
+name = "eventcontroller"
+version = "0.1.0"
+description = "A lightweight event data controller for event-based vision research"
+authors = [{name = "Chengyi Ma"}]
+readme = "README.md"
+requires-python = ">=3.8"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
