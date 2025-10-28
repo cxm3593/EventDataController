@@ -183,3 +183,34 @@ class EventDataController:
             frame_idx += 1
 
         pbar.close()
+
+    def save_as_txt(self, output_path: str, batch_size: int = 100000):
+        """
+        Convert hdf5 event data to a text file.
+        
+        Args:
+            output_path (str): Path to save the text file
+            batch_size (int): Number of events to write per line
+        """
+        if self.data_hdf5 is None:
+            raise ValueError("No data loaded to save.")
+
+        # Progress bar
+        total_events = len(self.events_handle)
+        pbar = tqdm(total=total_events, desc="Saving events to txt")
+
+        with open(output_path, 'w') as f:
+            # Write resolution as the first line
+            f.write(f"{self.data_width} {self.data_height}\n")
+
+            # Write events in batches
+            for i in range(0, len(self.events_handle), batch_size):
+                batch = self.events_handle[i:i + batch_size]
+
+                # Reorganize batch to (t, x, y, p) format
+                batch = np.array([[event['t'], event['x'], event['y'], event['p']] for event in batch])
+
+                np.savetxt(f, batch, fmt='%d')
+
+                pbar.update(len(batch))
+        pbar.close()
