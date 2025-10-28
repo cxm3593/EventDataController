@@ -217,3 +217,4 @@ class EventDataController:
 
                 pbar.update(len(batch))
         pbar.close()
+

@@ -3,7 +3,7 @@
 
 import os
 
-from event_data_controller.event_data_controller import EventDataController
+from econtroller import EventDataController
 
 data_dir = "C:\\Users\\cxm3593\\Academic\\Workspace\\Data\\Calib"
 # data_path = os.path.join(data_dir, "calib_recording.raw")
@@ -21,4 +21,4 @@ print(f"Data info: {controller.data_info}")
 #     accumulation_time_us=33333
 # )
 
-controller.save_as_txt("C:\\Users\\cxm3593\\Academic\\Workspace\\Data\\Calib\\calib_recording.txt", 100000)
+# controller.save_as_txt("C:\\Users\\cxm3593\\Academic\\Workspace\\Data\\Calib\\calib_recording.txt", 100000)
